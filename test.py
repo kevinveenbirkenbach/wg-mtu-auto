@@ -181,7 +181,107 @@ class TestWgMtuAutoExtended(unittest.TestCase):
         self.assertIn("[wg-mtu][WARN] --set-wg-mtu 1200 is below wg-min 1280; clamping to 1280.", s)
         self.assertIn("Forcing WireGuard MTU (override): 1280", s)
         mock_set_mtu.assert_any_call("wg0", 1280, True)
+        
+    # ---------- --apply-egress-mtu: setzt egress vor wg ----------
 
+    @patch("main.set_mtu")
+    @patch("main.probe_pmtu", return_value=1452)
+    @patch("main.read_mtu", return_value=1500)
+    @patch("main.exists_iface", return_value=True)
+    @patch("main.get_default_ifaces", return_value=["eth0"])
+    @patch("main.require_root", return_value=None)
+    def test_apply_egress_mtu_sets_egress_then_wg(
+        self, _req_root, _get_def, _exists, _read_mtu, _probe_pmtu, mock_set_mtu
+    ):
+        """
+        --apply-egress-mtu setzt egress=eth0 auf effective MTU (1452) und danach wg0 auf 1452-80=1372.
+        Reihenfolge der set_mtu-Aufrufe: erst eth0, dann wg0.
+        """
+        argv = ["main.py", "--dry-run", "--apply-egress-mtu", "--pmtu-target", "46.4.224.77"]
+        with patch.object(sys, "argv", argv):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                automtu.main()
+
+        out = buf.getvalue()
+        self.assertIn("Applying effective MTU 1452 to egress eth0", out)
+        self.assertIn("Computed wg0 MTU: 1372", out)
+
+        # Call order prüfen
+        calls = [
+            unittest.mock.call("eth0", 1452, True),  # egress zuerst
+            unittest.mock.call("wg0", 1372, True),   # dann wg0
+        ]
+        mock_set_mtu.assert_has_calls(calls, any_order=False)
+        self.assertEqual(mock_set_mtu.call_count, 2)
+
+    # ---------- --apply-egress-mtu: egress == wg_if -> skip apply auf egress ----------
+
+    @patch("main.wg_default_is_active", return_value=True)
+    @patch("main.wg_is_active", return_value=True)
+    @patch("main.set_mtu")
+    @patch("main.probe_pmtu", return_value=1500)
+    @patch("main.read_mtu", return_value=1500)
+    @patch("main.exists_iface", return_value=True)
+    @patch("main.get_default_ifaces", return_value=["wg0"])  # wg0 wird als egress gewählt
+    @patch("main.require_root", return_value=None)
+    def test_apply_egress_mtu_skips_when_egress_is_wg(
+        self, _req_root, _get_def, _exists, _read_mtu, _probe, mock_set_mtu, _wg_active, _wg_def_active
+    ):
+        """
+        Wenn egress == wg0, soll das Skript den egress-Apply überspringen, aber wg0 ganz normal setzen.
+        """
+        argv = ["main.py", "--dry-run", "--apply-egress-mtu", "--prefer-wg-egress", "--wg-if", "wg0"]
+        with patch.object(sys, "argv", argv):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                automtu.main()
+        s = out.getvalue()
+
+        self.assertIn("Detected egress interface: wg0", s)
+        self.assertIn("Skipping egress MTU apply because egress == wg0", s)
+        # wg0 wird trotzdem gesetzt (1500-80=1420)
+        mock_set_mtu.assert_any_call("wg0", 1420, True)
+        # Es darf nur ein set_mtu-Aufruf erfolgen (kein separater egress-Apply)
+        self.assertEqual(mock_set_mtu.call_count, 1)
+
+    # ---------- --apply-egress-mtu plus --set-wg-mtu override ----------
+
+    @patch("main.set_mtu")
+    @patch("main.probe_pmtu", return_value=1452)
+    @patch("main.read_mtu", return_value=1500)
+    @patch("main.exists_iface", return_value=True)
+    @patch("main.get_default_ifaces", return_value=["eth0"])
+    @patch("main.require_root", return_value=None)
+    def test_apply_egress_mtu_with_forced_wg_override(
+        self, _req_root, _get_def, _exists, _read_mtu, _probe_pmtu, mock_set_mtu
+    ):
+        """
+        Egress wird auf 1452 gesetzt, aber wg0 wird mit --set-wg-mtu (z. B. 1300) überschrieben,
+        unabhängig vom berechneten Wert (1372).
+        """
+        argv = [
+            "main.py", "--dry-run",
+            "--apply-egress-mtu",
+            "--pmtu-target", "1.1.1.1",
+            "--set-wg-mtu", "1300",
+        ]
+        with patch.object(sys, "argv", argv):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                automtu.main()
+
+        out = buf.getvalue()
+        self.assertIn("Applying effective MTU 1452 to egress eth0", out)
+        self.assertIn("Computed wg0 MTU: 1372", out)  # erst berechnet
+        self.assertIn("Forcing WireGuard MTU (override): 1300", out)  # dann überschrieben
+
+        calls = [
+            unittest.mock.call("eth0", 1452, True),
+            unittest.mock.call("wg0", 1300, True),
+        ]
+        mock_set_mtu.assert_has_calls(calls, any_order=False)
+        self.assertEqual(mock_set_mtu.call_count, 2)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

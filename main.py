@@ -207,6 +207,9 @@ def main():
     ap.add_argument("--pmtu-max-payload", type=int, default=1472, help="Upper bound payload for PMTU search (default: 1472 ~ 1500-28).")
     ap.add_argument("--pmtu-policy", choices=["min", "median", "max"], default="min",
                     help="How to choose effective PMTU across multiple targets (default: min).")
+    ap.add_argument("--apply-egress-mtu", action="store_true",
+                    help="Apply the effective Path MTU to the detected egress interface (e.g. eth0).")
+     
     ap.add_argument("--dry-run", action="store_true", help="Show actions without applying changes.")
     # NEW: force a specific WireGuard MTU (overrides computed value)
     ap.add_argument("--set-wg-mtu", type=int, help="Force a specific MTU to apply on the WireGuard interface (overrides computed value).")
@@ -288,6 +291,14 @@ def main():
             effective_mtu = min(base_mtu, chosen)
         else:
             print("[wg-mtu] WARNING: All PMTU probes failed. Falling back to egress MTU.")
+
+    # Optionally apply the effective MTU to the egress interface
+    if args.apply_egress_mtu:
+        if egress == args.wg_if:
+            print(f"[wg-mtu] INFO: Skipping egress MTU apply because egress == {args.wg_if}.")
+        else:
+            print(f"[wg-mtu] Applying effective MTU {effective_mtu} to egress {egress}")
+            set_mtu(egress, effective_mtu, args.dry_run)
 
     # Compute WG MTU
     wg_mtu = max(args.wg_min, effective_mtu - args.wg_overhead)
