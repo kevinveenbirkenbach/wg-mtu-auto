@@ -1,0 +1,4 @@
+git@github.com:kevinveenbirkenbach/wg-mtu-auto.git
+ssh://git@git.veen.world:2201/kevinveenbirkenbach/automtu.git
+ssh://git@code.infinito.nexus:2201/kevinveenbirkenbach/automtu.git
+https://pypi.org/project/automtu/
