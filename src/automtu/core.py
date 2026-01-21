@@ -13,6 +13,7 @@ from .net import (
     require_root,
     set_iface_mtu,
 )
+from .output import Logger, OutputMode, emit_json, emit_single_number
 from .pmtu import probe_pmtu
 from .wg import wg_is_active, wg_peer_endpoints
 
@@ -45,7 +46,24 @@ def _choose(values: Iterable[int], policy: str) -> int:
 
 
 def run_automtu(args) -> int:
-    require_root(args.dry_run)
+    mode = OutputMode(
+        print_mtu=getattr(args, "print_mtu", None),
+        print_json=bool(getattr(args, "print_json", False)),
+    )
+    err = mode.validate()
+    if err:
+        print(f"[automtu][ERROR] {err}", file=sys.stderr)
+        return 4
+
+    log = Logger(mode.machine).log
+
+    # Root is only needed if we actually change something (without --dry-run).
+    needs_root = bool(
+        args.apply_egress_mtu
+        or args.apply_wg_mtu
+        or (args.force_egress_mtu is not None)
+    )
+    require_root(dry=args.dry_run, needs_root=needs_root)
 
     egress = args.egress_if or detect_egress_iface(ignore_vpn=not args.prefer_wg_egress)
     if not egress:
@@ -66,35 +84,42 @@ def run_automtu(args) -> int:
         and default_route_uses_iface(args.wg_if)
     ):
         egress = args.wg_if
-        print(f"[automtu] Using WireGuard interface {args.wg_if} as egress basis.")
+        log(f"[automtu] Using WireGuard interface {args.wg_if} as egress basis.")
 
-    print(f"[automtu] Detected egress interface: {egress}")
+    log(f"[automtu] Detected egress interface: {egress}")
 
+    # Base MTU (optionally forced)
     if args.force_egress_mtu:
-        print(f"[automtu] Forcing egress MTU {args.force_egress_mtu} on {egress}")
+        log(f"[automtu] Forcing egress MTU {args.force_egress_mtu} on {egress}")
         set_iface_mtu(egress, args.force_egress_mtu, args.dry_run)
-        base_mtu = args.force_egress_mtu
+        base_mtu = int(args.force_egress_mtu)
     else:
-        base_mtu = read_iface_mtu(egress)
-    print(f"[automtu] Egress base MTU: {base_mtu}")
+        base_mtu = int(read_iface_mtu(egress))
+    log(f"[automtu] Egress base MTU: {base_mtu}")
 
+    # Targets (explicit + optional WG auto targets)
     targets = _split_targets(args.pmtu_target)
+    auto_targets_added: list[str] = []
+
     if args.auto_pmtu_from_wg:
         if wg_is_active(args.wg_if):
             peers = wg_peer_endpoints(args.wg_if)
             if peers:
-                print(
+                auto_targets_added = peers[:]
+                log(
                     f"[automtu] Auto-added WG peer endpoints as PMTU targets: {', '.join(peers)}"
                 )
                 targets = list(dict.fromkeys([*targets, *peers]))
         else:
-            print(
-                f"[automtu] INFO: {args.wg_if} not active; skipping auto PMTU targets."
-            )
+            log(f"[automtu] INFO: {args.wg_if} not active; skipping auto PMTU targets.")
 
+    # PMTU probing
     effective_mtu = base_mtu
+    probe_results: dict[str, Optional[int]] = {}
+    chosen_pmtu: Optional[int] = None
+
     if targets:
-        print(
+        log(
             f"[automtu] Probing Path MTU for: {', '.join(targets)} (policy={args.pmtu_policy})"
         )
         good: list[int] = []
@@ -102,54 +127,101 @@ def run_automtu(args) -> int:
             p = probe_pmtu(
                 t, args.pmtu_min_payload, args.pmtu_max_payload, args.pmtu_timeout
             )
-            print(f"[automtu]  - {t}: {p if p else 'probe failed'}")
+            probe_results[t] = p
+            log(f"[automtu]  - {t}: {p if p else 'probe failed'}")
             if p:
-                good.append(p)
+                good.append(int(p))
 
         if good:
-            chosen = _choose(good, args.pmtu_policy)
-            print(f"[automtu] Selected Path MTU (policy={args.pmtu_policy}): {chosen}")
-            effective_mtu = min(base_mtu, chosen)
+            chosen_pmtu = _choose(good, args.pmtu_policy)
+            log(
+                f"[automtu] Selected Path MTU (policy={args.pmtu_policy}): {chosen_pmtu}"
+            )
+            effective_mtu = min(base_mtu, chosen_pmtu)
         else:
-            print(
+            log(
                 "[automtu] WARNING: All PMTU probes failed. Falling back to egress MTU."
             )
 
+    # Apply egress MTU (optional)
+    egress_applied = False
     if args.apply_egress_mtu:
         if egress == args.wg_if:
-            print(
+            log(
                 f"[automtu] INFO: Skipping egress MTU apply because egress == {args.wg_if}."
             )
         else:
-            print(
-                f"[automtu] Applying effective MTU {effective_mtu} to egress {egress}"
-            )
+            log(f"[automtu] Applying effective MTU {effective_mtu} to egress {egress}")
             set_iface_mtu(egress, effective_mtu, args.dry_run)
+            egress_applied = True
 
+    # Compute WG MTU
     wg_mtu = max(int(args.wg_min), int(effective_mtu) - int(args.wg_overhead))
-    print(
+    log(
         f"[automtu] Computed {args.wg_if} MTU: {wg_mtu} (overhead={args.wg_overhead}, min={args.wg_min})"
     )
 
+    wg_mtu_set: Optional[int] = None
+    wg_mtu_clamped = False
+
     if args.set_wg_mtu is not None:
-        forced = max(int(args.wg_min), int(args.set_wg_mtu))
-        if forced != int(args.set_wg_mtu):
-            print(
+        wg_mtu_set = int(args.set_wg_mtu)
+        forced = max(int(args.wg_min), wg_mtu_set)
+        wg_mtu_clamped = forced != wg_mtu_set
+        if wg_mtu_clamped:
+            log(
                 f"[automtu][WARN] --set-wg-mtu clamped to {forced} (wg-min={args.wg_min})."
             )
         wg_mtu = forced
-        print(f"[automtu] Forcing WireGuard MTU (override): {wg_mtu}")
+        log(f"[automtu] Forcing WireGuard MTU (override): {wg_mtu}")
+
+    # Apply WG MTU (optional)
+    wg_present = iface_exists(args.wg_if)
+    wg_active = wg_is_active(args.wg_if) if wg_present else False
+    wg_applied = False
 
     if args.apply_wg_mtu:
-        if iface_exists(args.wg_if):
+        if wg_present:
             set_iface_mtu(args.wg_if, wg_mtu, args.dry_run)
-            print(f"[automtu] Applied: {args.wg_if} MTU {wg_mtu}")
+            log(f"[automtu] Applied: {args.wg_if} MTU {wg_mtu}")
+            wg_applied = True
         else:
-            print(
+            log(
                 f"[automtu] NOTE: {args.wg_if} not present yet. Start WireGuard first, then re-run."
             )
     else:
-        print("[automtu] INFO: Not applying WireGuard MTU (use --apply-wg-mtu).")
+        log("[automtu] INFO: Not applying WireGuard MTU (use --apply-wg-mtu).")
+
+    # Machine-readable outputs
+    if emit_single_number(
+        mode, base_mtu=base_mtu, effective_mtu=effective_mtu, wg_mtu=wg_mtu
+    ):
+        return 0
+
+    if emit_json(
+        mode,
+        egress_iface=egress,
+        base_mtu=base_mtu,
+        effective_mtu=effective_mtu,
+        egress_forced_mtu=int(args.force_egress_mtu) if args.force_egress_mtu else None,
+        egress_applied=egress_applied,
+        pmtu_targets=targets,
+        pmtu_auto_targets_added=auto_targets_added,
+        pmtu_policy=args.pmtu_policy,
+        pmtu_chosen=chosen_pmtu,
+        pmtu_results=probe_results,
+        wg_iface=args.wg_if,
+        wg_mtu=wg_mtu,
+        wg_overhead=int(args.wg_overhead),
+        wg_min=int(args.wg_min),
+        wg_set_mtu=wg_mtu_set,
+        wg_clamped=wg_mtu_clamped,
+        wg_present=wg_present,
+        wg_active=wg_active,
+        wg_applied=wg_applied,
+        dry_run=bool(args.dry_run),
+    ):
+        return 0
 
     _ = Result(
         egress=egress,

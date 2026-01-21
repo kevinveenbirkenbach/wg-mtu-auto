@@ -29,8 +29,8 @@ def set_iface_mtu(iface: str, mtu: int, dry: bool) -> None:
     subprocess.run(["ip", "link", "set", "mtu", str(mtu), "dev", iface], check=True)
 
 
-def require_root(dry: bool) -> None:
-    if not dry and os.geteuid() != 0:
+def require_root(*, dry: bool, needs_root: bool) -> None:
+    if needs_root and (not dry) and os.geteuid() != 0:
         print(
             "[automtu][ERROR] Please run as root (sudo) or use --dry-run.",
             file=sys.stderr,

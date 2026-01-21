@@ -90,4 +90,17 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--dry-run", action="store_true", help="Show actions without applying changes."
     )
+
+    # --- Machine-readable output modes ---
+    ap.add_argument(
+        "--print-mtu",
+        choices=["egress", "effective", "wg"],
+        help="Print only the selected MTU value as a number (stdout) for automation (e.g. Ansible).",
+    )
+    ap.add_argument(
+        "--print-json",
+        action="store_true",
+        help="Print a JSON object with computed values (stdout) for automation.",
+    )
+
     return ap

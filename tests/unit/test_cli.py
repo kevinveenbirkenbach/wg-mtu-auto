@@ -37,6 +37,8 @@ class TestCli(unittest.TestCase):
                 "--force-egress-mtu",
                 "1452",
                 "--dry-run",
+                "--print-mtu",
+                "wg",
             ]
         )
 
@@ -56,6 +58,8 @@ class TestCli(unittest.TestCase):
         self.assertEqual(args.set_wg_mtu, 1372)
         self.assertEqual(args.force_egress_mtu, 1452)
         self.assertTrue(args.dry_run)
+        self.assertEqual(args.print_mtu, "wg")
+        self.assertFalse(args.print_json)
 
 
 if __name__ == "__main__":
