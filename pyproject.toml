@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "automtu"
+version = "0.1.0"
+description = "Auto-detect egress interface, probe Path MTU, and apply MTU (WireGuard/egress)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Kevin Veen-Birkenbach" }]
+keywords = ["mtu", "wireguard", "pmtu", "networking"]
+dependencies = []
+
+[project.scripts]
+automtu = "automtu.__main__:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
