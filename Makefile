@@ -10,3 +10,6 @@ help:
 
 test:
 	@PYTHONPATH="$(CURDIR)/src" "$(PYTHON)" -m unittest discover -s tests/unit -p "test_*.py" -v
+
+install:
+	sudo pip install -e . --upgrade --break-system-packages

@@ -91,6 +91,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="Show actions without applying changes."
     )
 
+    # --- Persistence ---
+    ap.add_argument(
+        "--persist",
+        choices=["systemd"],
+        help="Persist MTU configuration across reboots (currently supported: systemd).",
+    )
+    ap.add_argument(
+        "--uninstall",
+        action="store_true",
+        help="Uninstall persistence backend (requires --persist).",
+    )
+
     # --- Machine-readable output modes ---
     ap.add_argument(
         "--print-mtu",

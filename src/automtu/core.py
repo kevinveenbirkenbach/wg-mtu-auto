@@ -57,13 +57,30 @@ def run_automtu(args) -> int:
 
     log = Logger(mode.machine).log
 
-    # Root is only needed if we actually change something (without --dry-run).
     needs_root = bool(
-        args.apply_egress_mtu
-        or args.apply_wg_mtu
-        or (args.force_egress_mtu is not None)
+        getattr(args, "apply_egress_mtu", False)
+        or getattr(args, "apply_wg_mtu", False)
+        or (getattr(args, "force_egress_mtu", None) is not None)
+        or (getattr(args, "persist", None) is not None)
     )
     require_root(dry=args.dry_run, needs_root=needs_root)
+
+    # Persistence mode: install/uninstall persistence mechanism and exit.
+    if getattr(args, "persist", None):
+        if args.persist == "systemd":
+            from .persist import persist_systemd, uninstall_systemd
+
+            if getattr(args, "uninstall", False):
+                uninstall_systemd(dry=args.dry_run)
+                return 0
+
+            persist_systemd(sys.argv, dry=args.dry_run)
+            return 0
+
+        print(
+            f"[automtu][ERROR] Unknown persist backend: {args.persist}", file=sys.stderr
+        )
+        return 4
 
     egress = args.egress_if or detect_egress_iface(ignore_vpn=not args.prefer_wg_egress)
     if not egress:
