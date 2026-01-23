@@ -5,6 +5,7 @@ import sys
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
+from .docker import detect_docker_ifaces
 from .net import (
     default_route_uses_iface,
     detect_egress_iface,
@@ -46,6 +47,12 @@ def _choose(values: Iterable[int], policy: str) -> int:
 
 
 def run_automtu(args) -> int:
+    # Expand apply-all -> set apply flags
+    if getattr(args, "apply_all", False):
+        args.apply_egress_mtu = True
+        args.apply_wg_mtu = True
+        args.apply_docker_mtu = True
+
     mode = OutputMode(
         print_mtu=getattr(args, "print_mtu", None),
         print_json=bool(getattr(args, "print_json", False)),
@@ -60,6 +67,7 @@ def run_automtu(args) -> int:
     needs_root = bool(
         getattr(args, "apply_egress_mtu", False)
         or getattr(args, "apply_wg_mtu", False)
+        or getattr(args, "apply_docker_mtu", False)
         or (getattr(args, "force_egress_mtu", None) is not None)
         or (getattr(args, "persist", None) is not None)
     )
@@ -209,6 +217,29 @@ def run_automtu(args) -> int:
     else:
         log("[automtu] INFO: Not applying WireGuard MTU (use --apply-wg-mtu).")
 
+    # Apply Docker MTU (optional)
+    docker_ifaces = detect_docker_ifaces(
+        getattr(args, "docker_if", None),
+        include_user_bridges=not bool(getattr(args, "docker_no_user_bridges", False)),
+    )
+    docker_applied: list[str] = []
+
+    if args.apply_docker_mtu:
+        if not docker_ifaces:
+            log("[automtu] INFO: No Docker interfaces detected for MTU apply.")
+        else:
+            log(
+                f"[automtu] Applying effective MTU {effective_mtu} to Docker ifaces: {', '.join(docker_ifaces)}"
+            )
+            for d in docker_ifaces:
+                if iface_exists(d):
+                    set_iface_mtu(d, effective_mtu, args.dry_run)
+                    docker_applied.append(d)
+    else:
+        log(
+            "[automtu] INFO: Not applying Docker MTU (use --apply-docker-mtu or --apply-all)."
+        )
+
     # Machine-readable outputs
     if emit_single_number(
         mode, base_mtu=base_mtu, effective_mtu=effective_mtu, wg_mtu=wg_mtu
@@ -236,6 +267,8 @@ def run_automtu(args) -> int:
         wg_present=wg_present,
         wg_active=wg_active,
         wg_applied=wg_applied,
+        docker_ifaces=docker_ifaces,
+        docker_applied=docker_applied,
         dry_run=bool(args.dry_run),
     ):
         return 0

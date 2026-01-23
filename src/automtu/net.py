@@ -18,6 +18,21 @@ def iface_exists(iface: str) -> bool:
     return pathlib.Path(f"/sys/class/net/{iface}").exists()
 
 
+def list_ifaces() -> list[str]:
+    """
+    Return a sorted list of all network interfaces visible under /sys/class/net.
+    """
+    base = pathlib.Path("/sys/class/net")
+    if not base.exists():
+        return []
+    names: list[str] = []
+    for p in base.iterdir():
+        if p.is_dir():
+            names.append(p.name)
+    names.sort()
+    return names
+
+
 def read_iface_mtu(iface: str) -> int:
     return int(pathlib.Path(f"/sys/class/net/{iface}/mtu").read_text().strip())
 

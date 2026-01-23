@@ -1,3 +1,4 @@
+# src/automtu/output.py
 from __future__ import annotations
 
 import json
@@ -27,7 +28,7 @@ class Logger:
     """
 
     def __init__(self, machine_mode: bool) -> None:
-        self._machine = machine_mode
+        self._machine = bool(machine_mode)
 
     def log(self, msg: str) -> None:
         if self._machine:
@@ -56,7 +57,6 @@ def emit_single_number(
         print(int(wg_mtu))
         return True
 
-    # Should never happen due to argparse choices
     print("[automtu][ERROR] Invalid --print-mtu value.", file=sys.stderr)
     raise SystemExit(4)
 
@@ -83,6 +83,8 @@ def emit_json(
     wg_present: bool,
     wg_active: bool,
     wg_applied: bool,
+    docker_ifaces: Optional[list[str]] = None,
+    docker_applied: Optional[list[str]] = None,
     dry_run: bool,
 ) -> bool:
     """
@@ -90,6 +92,9 @@ def emit_json(
     """
     if not mode.print_json:
         return False
+
+    docker_ifaces = list(docker_ifaces or [])
+    docker_applied = list(docker_applied or [])
 
     payload = {
         "egress": {
@@ -120,6 +125,10 @@ def emit_json(
             "present": bool(wg_present),
             "active": bool(wg_active),
             "applied": bool(wg_applied),
+        },
+        "docker": {
+            "ifaces": docker_ifaces,
+            "applied": docker_applied,
         },
         "dry_run": bool(dry_run),
     }

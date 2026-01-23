@@ -23,8 +23,7 @@ class TestCli(unittest.TestCase):
                 "1472",
                 "--pmtu-policy",
                 "median",
-                "--apply-egress-mtu",
-                "--apply-wg-mtu",
+                "--apply-all",
                 "--wg-if",
                 "wg0",
                 "--wg-overhead",
@@ -36,6 +35,8 @@ class TestCli(unittest.TestCase):
                 "1372",
                 "--force-egress-mtu",
                 "1452",
+                "--docker-if",
+                "docker0,br-123",
                 "--dry-run",
                 "--print-mtu",
                 "wg",
@@ -49,14 +50,22 @@ class TestCli(unittest.TestCase):
         self.assertEqual(args.pmtu_min_payload, 1200)
         self.assertEqual(args.pmtu_max_payload, 1472)
         self.assertEqual(args.pmtu_policy, "median")
-        self.assertTrue(args.apply_egress_mtu)
-        self.assertTrue(args.apply_wg_mtu)
+
+        self.assertTrue(args.apply_all)
+        self.assertFalse(args.apply_egress_mtu)  # apply_all expands in core()
+        self.assertFalse(args.apply_wg_mtu)
+        self.assertFalse(args.apply_docker_mtu)
+
         self.assertEqual(args.wg_if, "wg0")
         self.assertEqual(args.wg_overhead, 80)
         self.assertEqual(args.wg_min, 1280)
         self.assertTrue(args.auto_pmtu_from_wg)
         self.assertEqual(args.set_wg_mtu, 1372)
         self.assertEqual(args.force_egress_mtu, 1452)
+
+        self.assertEqual(args.docker_if, ["docker0,br-123"])
+        self.assertFalse(args.docker_no_user_bridges)
+
         self.assertTrue(args.dry_run)
         self.assertEqual(args.print_mtu, "wg")
         self.assertFalse(args.print_json)

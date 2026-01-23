@@ -7,7 +7,7 @@ import os
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="automtu",
-        description="Probe Path MTU and compute/apply MTU for egress and/or WireGuard.",
+        description="Probe Path MTU and compute/apply MTU for egress and/or WireGuard (and Docker bridges).",
     )
 
     ap.add_argument(
@@ -49,6 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Aggregate PMTU across targets (default: min).",
     )
 
+    # --- Apply flags ---
     ap.add_argument(
         "--apply-egress-mtu",
         action="store_true",
@@ -57,7 +58,18 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--apply-wg-mtu", action="store_true", help="Apply MTU to WireGuard interface."
     )
+    ap.add_argument(
+        "--apply-docker-mtu",
+        action="store_true",
+        help="Apply effective MTU to Docker bridges (docker0 and br-*).",
+    )
+    ap.add_argument(
+        "--apply-all",
+        action="store_true",
+        help="Apply MTU to egress + WireGuard + Docker bridges (implies apply flags).",
+    )
 
+    # --- WireGuard ---
     ap.add_argument(
         "--wg-if",
         default=os.environ.get("WG_IF", "wg0"),
@@ -82,6 +94,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument("--set-wg-mtu", type=int, help="Force MTU for WireGuard interface.")
 
+    # --- Docker ---
+    ap.add_argument(
+        "--docker-if",
+        action="append",
+        help="Explicit Docker interface(s) for MTU apply (repeatable or comma-separated). If omitted, auto-detect docker0 and br-*.",
+    )
+    ap.add_argument(
+        "--docker-no-user-bridges",
+        action="store_true",
+        help="Only apply to docker0, do not include br-* user bridges.",
+    )
+
+    # --- Force egress ---
     ap.add_argument(
         "--force-egress-mtu",
         type=int,
@@ -94,8 +119,8 @@ def build_parser() -> argparse.ArgumentParser:
     # --- Persistence ---
     ap.add_argument(
         "--persist",
-        choices=["systemd"],
-        help="Persist MTU configuration across reboots (currently supported: systemd).",
+        choices=["systemd", "docker"],
+        help="Persist MTU configuration across reboots (supported: systemd, docker).",
     )
     ap.add_argument(
         "--uninstall",
